@@ -1,0 +1,7 @@
+torch>=1.10
+numpy
+opencv-python
+albumentations
+Pillow
+pathlib
+roboflow
