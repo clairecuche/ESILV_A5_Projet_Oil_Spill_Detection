@@ -56,8 +56,8 @@ En haut à droite → clique sur le nom du kernel actuel
 
 Choisis Python 3.11 (ou “python311”)
 
-avant d'installer les requirements si albumentations ne marche pas: 
+Executer ProjetCV.ipynb pour charger LADOS
+Puis executer la pipeline avec 
 """
-pip install --upgrade pip setuptools wheel
-pip install numpy==1.26.4
+python ./main.py
 """
