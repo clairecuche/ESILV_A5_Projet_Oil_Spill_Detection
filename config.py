@@ -22,14 +22,14 @@ CLASS_NAMES = {
 }
 NUM_CLASSES = len(CLASS_TO_ID)
 TARGET_SIZE: Tuple[int, int] = (640, 640) 
-DATA_DIR = Path('./LADOS')
+DATA_DIR = Path('./LADOS-2')
 NUM_CLASSES = 6
 
 # --- Paramètres d'Entraînement SegFormer (comme le paper pour l'instant)---
 OUTPUT_DIR_SEG = Path('./outputs/segformer')
 CHECKPOINT_DIR_SEG = OUTPUT_DIR_SEG / 'checkpoints'
 BATCH_SIZE = 16  
-NUM_EPOCHS = 100 
+NUM_EPOCHS = 10 
 LEARNING_RATE = 6e-5 
 WEIGHT_DECAY = 0.01
 PATIENCE = 10  
