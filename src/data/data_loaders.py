@@ -9,7 +9,7 @@ from pathlib import Path
 import albumentations as A 
 from albumentations.pytorch import ToTensorV2
 from typing import Tuple, Dict, Optional
-from config import TARGET_SIZE
+from config import TARGET_SIZE, DATA_DIR, BATCH_SIZE, NUM_CLASSES, NUM_WORKERS
 
 # --- Fonctions d'Augmentation (Robustes et Stables) ---
 
@@ -202,7 +202,7 @@ class LADOSDataset(Dataset):
         return image, mask
 
 
-def get_dataloaders(dataset_path: str, batch_size: int = 8, num_workers: int = 4) -> Dict[str, DataLoader]:
+def get_dataloaders(dataset_path: str = DATA_DIR, batch_size: int = BATCH_SIZE, num_workers: int = NUM_WORKERS) -> Dict[str, DataLoader]:
     """
     Crée et retourne les DataLoaders pour l'entraînement et la validation.
     """

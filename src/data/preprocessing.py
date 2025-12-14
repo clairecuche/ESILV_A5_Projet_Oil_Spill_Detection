@@ -7,7 +7,7 @@ import torch
 from pathlib import Path
 import os
 from typing import Dict, Tuple
-from config import CLASS_TO_ID, NUM_CLASSES, TARGET_SIZE
+from config import CLASS_TO_ID, NUM_CLASSES, TARGET_SIZE, DATA_DIR
 
 def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARGET_SIZE) -> None:
     """
@@ -87,7 +87,7 @@ def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARG
     print("TERMINÉ : Conversion des annotations en masques.")
 
 
-def calculate_class_weights(dataset_path: str, split: str = 'train', num_classes: int = NUM_CLASSES) -> torch.Tensor:
+def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train', num_classes: int = NUM_CLASSES) -> torch.Tensor:
     """
     Calcule les poids des classes en utilisant la méthode de la Fréquence Inverse Médiane.
     """
