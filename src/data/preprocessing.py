@@ -7,20 +7,7 @@ import torch
 from pathlib import Path
 import os
 from typing import Dict, Tuple
-
-# --- Constantes du Projet ---
-# Correspond aux 6 classes du jeu de données LADOS (fond + 5 classes d'intérêt)
-CLASS_TO_ID: Dict[str, int] = {
-    'background': 0,
-    'oil': 1,
-    'emulsion': 2,
-    'sheen': 3,
-    'ship': 4,
-    'oil-platform': 5
-}
-NUM_CLASSES = len(CLASS_TO_ID)
-TARGET_SIZE: Tuple[int, int] = (640, 640) 
-# -----------------------------
+from config import CLASS_TO_ID, NUM_CLASSES, TARGET_SIZE
 
 def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARGET_SIZE) -> None:
     """

@@ -9,10 +9,7 @@ from pathlib import Path
 import albumentations as A 
 from albumentations.pytorch import ToTensorV2
 from typing import Tuple, Dict, Optional
-
-# --- Constantes du Projet ---
-TARGET_SIZE: Tuple[int, int] = (640, 640) 
-# -----------------------------
+from config import TARGET_SIZE
 
 # --- Fonctions d'Augmentation (Robustes et Stables) ---
 
