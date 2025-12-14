@@ -5,3 +5,4 @@ albumentations
 Pillow
 pathlib
 roboflow
+transformers
