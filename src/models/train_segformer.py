@@ -49,7 +49,10 @@ class SegFormerTrainer:
                                             weight_decay=WEIGHT_DECAY)
         
         # 4. DataLoaders (Récupère train, valid, test)
-        self.train_loader, self.valid_loader, self.test_loader = get_dataloaders()
+        loaders = get_dataloaders()
+        self.train_loader = loaders['train']
+        self.valid_loader = loaders['valid']
+        self.test_loader = loaders['test']
         
         # 5. Métriques et Suivi (État)
         self.train_metrics = SegmentationMetrics(NUM_CLASSES)
@@ -71,6 +74,7 @@ class SegFormerTrainer:
             num_labels=NUM_CLASSES,
             ignore_mismatched_sizes=True
         )
+        
         return model
     def _run_one_epoch(self, dataloader, metrics: 'SegmentationMetrics', is_training: bool, epoch: int):
         """Logique générique pour une epoch (entraînement ou validation)."""
@@ -89,12 +93,19 @@ class SegFormerTrainer:
         
         with context_manager:
             for batch_idx, batch in enumerate(pbar):
-                images = batch['image'].to(self.device)
-                masks = batch['mask'].to(self.device)
+                print(f"Type de batch: {type(batch)}, Longueur: {len(batch)}")
+                if len(batch) > 0:
+                    print(f"Type du premier élément: {type(batch[0])}")
+                images, masks = batch 
+                images = images.to(self.device)
+                masks = masks.to(self.device)
                 
                 if is_training:
                     self.optimizer.zero_grad()
                 
+                # Forward pass SegFormer
+                outputs = self.model(pixel_values=images, labels=masks)
+                    
                 # Forward pass SegFormer
                 # Pour l'entraînement (si is_training=True), on passe les labels pour obtenir outputs.loss
                 outputs = self.model(pixel_values=images, labels=masks)
