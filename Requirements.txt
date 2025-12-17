@@ -6,3 +6,5 @@ Pillow
 pathlib
 roboflow
 transformers
+pandas
+sklearn

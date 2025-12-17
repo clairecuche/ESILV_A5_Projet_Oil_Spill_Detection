@@ -9,7 +9,7 @@ from pathlib import Path
 import albumentations as A 
 from albumentations.pytorch import ToTensorV2
 from typing import Tuple, Dict, Optional
-from config import TARGET_SIZE, DATA_DIR, BATCH_SIZE, NUM_CLASSES, NUM_WORKERS
+from config import TARGET_SIZE, DATA_DIR, BATCH_SIZE, NUM_CLASSES, NUM_WORKERS, PIN_MEMORY, PREFETCH_FACTOR
 
 # --- Fonctions d'Augmentation (Robustes et Stables) ---
 
@@ -52,9 +52,9 @@ def get_training_augmentation(target_size: Tuple[int, int] = TARGET_SIZE) -> A.C
             std=[0.229, 0.224, 0.225]
         ),
         ToTensorV2()
-    ], 
+    ]
     # Assurer que le masque utilise une interpolation 'Nearest' pour les pixels discrets
-    additional_targets={'mask': 'mask'}) 
+    )  
 
 
 def get_validation_augmentation(target_size: Tuple[int, int] = TARGET_SIZE) -> A.Compose:
@@ -69,7 +69,7 @@ def get_validation_augmentation(target_size: Tuple[int, int] = TARGET_SIZE) -> A
             std=[0.229, 0.224, 0.225]
         ),
         ToTensorV2()
-    ], additional_targets={'mask': 'mask'})
+    ])
 
 
 def visualize_augmentation_example(dataset_path: str, index: int = 0, n_versions: int = 3) -> None:
@@ -185,12 +185,22 @@ class LADOSDataset(Dataset):
         
         # 1. Chargement des données
         image = cv2.imread(str(image_path))
+        if image is None:
+            raise FileNotFoundError(f"Image not found: {image_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise FileNotFoundError(f"Mask not found: {mask_path}")
         # S'assurer que les masques sont des tableaux 2D (H, W)
         if mask.ndim == 3:
             mask = mask[:, :, 0]
+
+        # Si les dimensions diffèrent, redimensionner le masque pour correspondre à l'image
+        h_img, w_img = image.shape[:2]
+        h_mask, w_mask = mask.shape[:2]
+        if (h_img, w_img) != (h_mask, w_mask):
+            mask = cv2.resize(mask, (w_img, h_img), interpolation=cv2.INTER_NEAREST)
 
         # 2. Application de la transformation/augmentation
         augmented = self.transform(image=image, mask=mask)
@@ -207,37 +217,25 @@ def get_dataloaders(dataset_path: str = DATA_DIR, batch_size: int = BATCH_SIZE, 
     Crée et retourne les DataLoaders pour l'entraînement et la validation.
     """
     
-    # Initialisation des transformations
     train_transform = get_training_augmentation()
     val_test_transform = get_validation_augmentation()
 
-    # Création des Datasets
     train_dataset = LADOSDataset(dataset_path, 'train', train_transform)
     val_dataset = LADOSDataset(dataset_path, 'valid', val_test_transform)
     test_dataset = LADOSDataset(dataset_path, 'test', val_test_transform)
 
-    # Création des DataLoaders
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        num_workers=num_workers, 
-        pin_memory=True
-    )
-    val_loader = DataLoader(
-        val_dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
-        num_workers=num_workers, 
-        pin_memory=True
-    )
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
-        num_workers=num_workers, 
-        pin_memory=True
-    )
+    # 5. OPTIMISATION : Paramètres DataLoader
+    common_params = {
+        'batch_size': batch_size,
+        'num_workers': num_workers,
+        'pin_memory': True,
+        'prefetch_factor': PREFETCH_FACTOR,
+        'persistent_workers': True if num_workers > 0 else False # AJOUT
+    }
+
+    train_loader = DataLoader(train_dataset, shuffle=True, **common_params)
+    val_loader = DataLoader(val_dataset, shuffle= False, **common_params)
+    test_loader = DataLoader(test_dataset,shuffle=False, **common_params)
 
     return {
         'train': train_loader,

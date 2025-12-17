@@ -13,6 +13,8 @@ from tqdm import tqdm
 import json
 from datetime import datetime
 import matplotlib.pyplot as plt
+from torch.cuda.amp import GradScaler, autocast
+import torch.nn.functional as F
 
 from transformers import (
     SegformerForSemanticSegmentation,
@@ -47,6 +49,8 @@ class SegFormerTrainer:
         self.optimizer = torch.optim.AdamW(self.model.parameters(), 
                                             lr=LEARNING_RATE, 
                                             weight_decay=WEIGHT_DECAY)
+
+        self.scaler = GradScaler(DEVICE)  # Pour AMP
         
         # 4. DataLoaders (Récupère train, valid, test)
         loaders = get_dataloaders()
@@ -75,7 +79,14 @@ class SegFormerTrainer:
             ignore_mismatched_sizes=True
         )
         
+        # 6. OPTIMISATION : Compilation du modèle PyTorch 2.0+
+        if self.device.type == 'cuda' and torch.__version__ >= '2.0':
+            print("🚀 Compilation du modèle SegFormer (PyTorch 2.0+)...")
+            # Utiliser 'reduce-overhead' ou 'compile' pour l'entraînement
+            model = torch.compile(model, mode='reduce-overhead') 
+
         return model
+    
     def _run_one_epoch(self, dataloader, metrics: 'SegmentationMetrics', is_training: bool, epoch: int):
         """Logique générique pour une epoch (entraînement ou validation)."""
         if is_training:
@@ -89,13 +100,12 @@ class SegFormerTrainer:
         running_loss = 0.0
         pbar = tqdm(dataloader, desc=pbar_desc)
         
-        context_manager = torch.enable_grad() if is_training else torch.no_grad()
+        # Contexte de PyTorch pour l'entraînement (enable_grad) ou la validation (no_grad)
+        context_manager_grad = torch.enable_grad() if is_training else torch.no_grad()
         
-        with context_manager:
+        with context_manager_grad: 
             for batch_idx, batch in enumerate(pbar):
-                print(f"Type de batch: {type(batch)}, Longueur: {len(batch)}")
-                if len(batch) > 0:
-                    print(f"Type du premier élément: {type(batch[0])}")
+                # Le batch est un tuple (images, masks)
                 images, masks = batch 
                 images = images.to(self.device)
                 masks = masks.to(self.device)
@@ -103,29 +113,38 @@ class SegFormerTrainer:
                 if is_training:
                     self.optimizer.zero_grad()
                 
-                # Forward pass SegFormer
-                outputs = self.model(pixel_values=images, labels=masks)
+                # 4. OPTIMISATION : Début du contexte Mixed Precision (autocast)
+                # Active autocast uniquement si le GPU est utilisé
+                with autocast(enabled=self.device.type == 'cuda'): 
                     
-                # Forward pass SegFormer
-                # Pour l'entraînement (si is_training=True), on passe les labels pour obtenir outputs.loss
-                outputs = self.model(pixel_values=images, labels=masks)
-                logits = outputs.logits
-                
-                # 💡 Logique d'Upsampling du Code 2
-                logits_upsampled = nn.functional.interpolate(
-                    logits,
-                    size=masks.shape[-2:],
-                    mode='bilinear',
-                    align_corners=False
-                )
-                
-                # Calcul de la perte avec la weighted loss
-                loss = self.criterion(logits_upsampled, masks)
+                    # Forward pass SegFormer
+                    # On n'utilise pas 'labels' ici, car nous calculons la perte manuellement après upsampling
+                    outputs = self.model(pixel_values=images)
+                    logits = outputs.logits 
+                    
+                    # 💡 Logique d'Upsampling vers la taille du masque (TARGET_SIZE)
+                    logits_upsampled = F.interpolate(
+                        logits,
+                        size=masks.shape[-2:], # Utilise H, W du masque cible (640 ou 512)
+                        mode='bilinear',
+                        align_corners=False
+                    )
+                    
+                    # Calcul de la perte avec la weighted loss (la perte est mise à l'échelle si en mode AMP)
+                    loss = self.criterion(logits_upsampled, masks)
                 
                 if is_training:
-                    loss.backward()
-                    self.optimizer.step()
+                    # 4. OPTIMISATION : Backward pass et optimisation avec GradScaler
+                    # Mise à l'échelle de la perte
+                    self.scaler.scale(loss).backward() 
+                    
+                    # Met à jour les poids (si les gradients ne sont pas trop grands)
+                    self.scaler.step(self.optimizer) 
+                    
+                    # Met à jour le facteur d'échelle pour le prochain tour
+                    self.scaler.update() 
                 
+                # Le .item() est utilisé pour les statistiques (même si la perte est mise à l'échelle)
                 running_loss += loss.item()
                 
                 # Calcul des prédictions pour les métriques
@@ -210,7 +229,7 @@ class SegFormerTrainer:
             print("Impossible d'évaluer : aucun meilleur modèle trouvé.")
             return
             
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         
         # 2. Évaluer (en utilisant la même fonction d'exécution d'epoch, mais sur le test set)
