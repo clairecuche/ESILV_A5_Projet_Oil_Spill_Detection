@@ -13,7 +13,7 @@ from tqdm import tqdm
 import json
 from datetime import datetime
 import matplotlib.pyplot as plt
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import autocast, GradScaler
 import torch.nn.functional as F
 
 from transformers import (
@@ -115,7 +115,7 @@ class SegFormerTrainer:
                 
                 # 4. OPTIMISATION : Début du contexte Mixed Precision (autocast)
                 # Active autocast uniquement si le GPU est utilisé
-                with autocast(device_type="cuda", enabled=self.device.type == "cuda"):
+                with autocast("cuda", enabled=self.device.type == "cuda"):
                     
                     # Forward pass SegFormer
                     # On n'utilise pas 'labels' ici, car nous calculons la perte manuellement après upsampling
