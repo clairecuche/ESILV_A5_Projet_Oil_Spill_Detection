@@ -115,7 +115,7 @@ class SegFormerTrainer:
                 
                 # 4. OPTIMISATION : Début du contexte Mixed Precision (autocast)
                 # Active autocast uniquement si le GPU est utilisé
-                with autocast("cuda", enabled=self.device.type == "cuda"):
+                with autocast(device_type="cuda", enabled=self.device.type == "cuda"):
                     
                     # Forward pass SegFormer
                     # On n'utilise pas 'labels' ici, car nous calculons la perte manuellement après upsampling
