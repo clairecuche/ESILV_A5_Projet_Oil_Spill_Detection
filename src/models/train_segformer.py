@@ -50,7 +50,7 @@ class SegFormerTrainer:
                                             lr=LEARNING_RATE, 
                                             weight_decay=WEIGHT_DECAY)
 
-        self.scaler = GradScaler(DEVICE)  # Pour AMP
+        self.scaler = GradScaler("cuda") # Pour AMP
         
         # 4. DataLoaders (Récupère train, valid, test)
         loaders = get_dataloaders()
@@ -115,7 +115,7 @@ class SegFormerTrainer:
                 
                 # 4. OPTIMISATION : Début du contexte Mixed Precision (autocast)
                 # Active autocast uniquement si le GPU est utilisé
-                with autocast(enabled=self.device.type == 'cuda'): 
+                with autocast("cuda", enabled=self.device.type == "cuda"):
                     
                     # Forward pass SegFormer
                     # On n'utilise pas 'labels' ici, car nous calculons la perte manuellement après upsampling

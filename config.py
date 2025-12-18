@@ -28,7 +28,7 @@ NUM_CLASSES = 6
 # --- Paramètres d'Entraînement SegFormer (comme le paper pour l'instant)---
 OUTPUT_DIR_SEG = Path('./outputs/segformer')
 CHECKPOINT_DIR_SEG = OUTPUT_DIR_SEG / 'checkpoints'
-BATCH_SIZE = 4 #Pas possible d'augmenter plus sur la machine actuelle
+BATCH_SIZE = 8 #Pas possible d'augmenter plus sur la machine actuelle
 NUM_EPOCHS = 1
 LEARNING_RATE = 6e-5 
 WEIGHT_DECAY = 0.01
