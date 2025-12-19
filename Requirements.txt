@@ -7,4 +7,6 @@ pathlib
 roboflow
 transformers
 pandas
-sklearn
+scikit-learn
+ultralytics
+pycocotools

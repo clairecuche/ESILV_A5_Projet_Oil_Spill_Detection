@@ -5,7 +5,6 @@ from src.data.preprocessing import convert_coco_to_masks, calculate_class_weight
 from src.data.data_loaders import get_dataloaders, get_training_augmentation, visualize_augmentation_example
 import torch
 
-
 DATASET_PATH = 'LADOS-2'
 BATCH_SIZE = 8
 NUM_WORKERS = 4
