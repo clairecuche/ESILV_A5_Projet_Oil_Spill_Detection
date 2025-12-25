@@ -21,7 +21,7 @@ CLASS_NAMES = {
     5: 'Oil-platform'
 }
 NUM_CLASSES = len(CLASS_TO_ID)
-TARGET_SIZE: Tuple[int, int] = (256, 256) #Reduit pour accélérer les tests
+TARGET_SIZE: Tuple[int, int] = (640, 640) #Reduit pour accélérer les tests
 DATA_DIR = Path('./LADOS-2')
 NUM_CLASSES = 6
 
@@ -29,7 +29,7 @@ NUM_CLASSES = 6
 OUTPUT_DIR_SEG = Path('./outputs/segformer')
 CHECKPOINT_DIR_SEG = OUTPUT_DIR_SEG / 'checkpoints'
 BATCH_SIZE = 8 #Pas possible d'augmenter plus sur la machine actuelle
-NUM_EPOCHS = 1
+NUM_EPOCHS = 10
 LEARNING_RATE = 6e-5 
 WEIGHT_DECAY = 0.01
 PATIENCE = 10  
@@ -39,7 +39,7 @@ MODEL_NAME_SEG = 'nvidia/segformer-b3-finetuned-cityscapes-1024-1024'
 # --- Paramètres d'Entraînement Yolo (comme le paper pour l'instant)---
 OUTPUT_DIR_YOLO = Path('./outputs/yolo')
 CHECKPOINT_DIR_YOLO = OUTPUT_DIR_YOLO / 'checkpoints'
-BATCH_SIZE_YOLO = 32 #Pas possible d'augmenter plus sur la machine actuelle
+BATCH_SIZE_YOLO = 32 
 NUM_EPOCHS_YOLO = 80
 LEARNING_RATE_YOLO = 6e-5 
 WEIGHT_DECAY = 0.01
