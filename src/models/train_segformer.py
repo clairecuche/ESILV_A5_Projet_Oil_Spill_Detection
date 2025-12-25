@@ -23,6 +23,7 @@ from transformers import (
 from src.data.data_loaders import get_dataloaders
 from src.data.preprocessing import calculate_class_weights
 from config import *
+from metrics import SegmentationMetrics
 
 
 
@@ -241,71 +242,6 @@ class SegFormerTrainer:
         for class_id, iou in enumerate(test_results['class_iou']):
             class_name = CLASS_NAMES.get(class_id, f"Class_{class_id}")
             print(f"  {class_name:15s}: {iou:.4f}")
-
-class SegmentationMetrics:
-    """
-    Calcule mIoU et mAcc selon les formules du paper (Section 4.4)
-    
-    """
-    
-    def __init__(self, ignore_index=None):
-        self.num_classes = NUM_CLASSES
-        self.ignore_index = ignore_index
-        self.reset()
-    
-    def reset(self):
-        """Réinitialise les compteurs"""
-        self.confusion_matrix = np.zeros((self.num_classes, self.num_classes))
-    
-    def update(self, pred, target):
-        """Met à jour la matrice de confusion"""
-        if torch.is_tensor(pred):
-            pred = pred.cpu().numpy()
-        if torch.is_tensor(target):
-            target = target.cpu().numpy()
-        
-        pred = pred.flatten()
-        target = target.flatten()
-        
-        if self.ignore_index is not None:
-            mask = target != self.ignore_index
-            pred = pred[mask]
-            target = target[mask]
-        
-        for t, p in zip(target, pred):
-            if 0 <= t < self.num_classes and 0 <= p < self.num_classes:
-                self.confusion_matrix[int(t), int(p)] += 1
-    
-    def compute_iou(self):
-        """Calcule IoU par classe et mIoU (excluant le background, classe 0)"""
-        TP = np.diag(self.confusion_matrix)
-        FP = self.confusion_matrix.sum(axis=0) - TP
-        FN = self.confusion_matrix.sum(axis=1) - TP
-        
-        denominator = TP + FP + FN
-        iou = np.divide(TP, denominator, out=np.zeros_like(TP, dtype=float), where=denominator != 0)
-        
-        valid_classes = iou[1:] # Exclure background (classe 0) pour mIoU selon le paper
-        miou = np.nanmean(valid_classes)
-        
-        return {'class_iou': iou, 'mIoU': miou, 'mIoU_with_bg': np.nanmean(iou)}
-    
-    def compute_accuracy(self):
-        """Calcule mAcc"""
-        TP = np.diag(self.confusion_matrix)
-        FN = self.confusion_matrix.sum(axis=1) - TP
-        
-        denominator = TP + FN
-        accuracy = np.divide(TP, denominator, out=np.zeros_like(TP, dtype=float), where=denominator != 0)
-        
-        macc = np.nanmean(accuracy)
-        
-        return {'class_acc': accuracy, 'mAcc': macc}
-
-    def get_results(self):
-        """Retourne tous les résultats"""
-        return {**self.compute_iou(), **self.compute_accuracy()}
-    
 
 if __name__ == '__main__':
     trainer = SegFormerTrainer()
