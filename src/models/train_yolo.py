@@ -110,6 +110,8 @@ class YOLOv11Trainer:
             epochs=NUM_EPOCHS_YOLO,  # Max epochs (early stopping activé)
             batch=BATCH_SIZE_YOLO,  # 32 selon paper
             imgsz=TARGET_SIZE[0],
+            project="/kaggle/working/yolo_results", # Chemin direct et simple
+            name="run1",
             device=self.device,
             
             # Optimizer (AdamW implicite)
@@ -166,12 +168,9 @@ class YOLOv11Trainer:
         print("="*50)
         
         # 1. Charger le meilleur modèle sauvegardé
-        best_model_path = Path(self.model.trainer.save_dir) / 'weights' / 'best.pt'
-        if not best_model_path.exists():
-            print(f"⚠️ Modèle non trouvé à {best_model_path}, utilisation du modèle en mémoire.")
-            model = self.model
-        else:
-            model = YOLO(str(best_model_path))
+        # Dans ton script d'évaluation
+        best_model_path = "/kaggle/working/yolo_results/run1/weights/best.pt"
+        model = YOLO(best_model_path)
         
         # 2. Paramètres de dénormalisation (ImageNet standards)
         mean = np.array([0.485, 0.456, 0.406])
