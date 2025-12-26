@@ -172,11 +172,11 @@ class YOLOv11Trainer:
         if not best_model_path.exists():
             print(f"⚠️ Modèle non trouvé à {best_model_path}")
             # Fallback : on cherche dans le dossier project par défaut d'Ultralytics si besoin
-            best_model_path = Path("/kaggle/working/runs/segment/yolo_training/weights/best.pt")
+            best_model_path = Path("/kaggle/working/yolo/yolo_training/weights/best.pt")
             
         print(f"🔄 Chargement des poids : {best_model_path}")
         model = YOLO(str(best_model_path))
-        
+
         # 2. Paramètres de dénormalisation (ImageNet standards)
         mean = np.array([0.485, 0.456, 0.406])
         std = np.array([0.229, 0.224, 0.225])
