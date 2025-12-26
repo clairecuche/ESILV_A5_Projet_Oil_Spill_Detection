@@ -156,84 +156,71 @@ class YOLOv11Trainer:
         self._evaluate_with_metrics()
         
         return results
-    
+
     def _evaluate_with_metrics(self):
         """
-        Évalue le modèle sur le test set avec les métriques du paper:
-        - IoU par classe
-        - mIoU (excluant background)
-        - mAcc
-        
-        Note: YOLO prédit des masques d'instance, nous devons les convertir en 
-        masques sémantiques en assignant chaque pixel à la classe avec le plus 
-        haut score de confiance (comme mentionné dans le paper section 4.4).
+        Évalue le modèle avec dénormalisation et conversion sémantique.
         """
         print("\n" + "="*50)
-        print("📊 ÉVALUATION FINALE SUR TEST SET")
+        print("📊 ÉVALUATION FINALE SUR TEST SET (CORRIGÉE)")
         print("="*50)
         
-        # Charger le meilleur modèle
-        best_model_path = OUTPUT_DIR_YOLO / 'yolo_training' / 'weights' / 'best.pt'
+        # 1. Charger le meilleur modèle sauvegardé
+        best_model_path = Path(self.model.trainer.save_dir) / 'weights' / 'best.pt'
         if not best_model_path.exists():
-            print("⚠️ Meilleur modèle non trouvé, utilisation du modèle actuel.")
+            print(f"⚠️ Modèle non trouvé à {best_model_path}, utilisation du modèle en mémoire.")
             model = self.model
         else:
             model = YOLO(str(best_model_path))
         
-        # Récupérer le test loader
-        loaders = get_dataloaders()
-        test_loader = loaders['test']
+        # 2. Paramètres de dénormalisation (ImageNet standards)
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
         
-        # Métriques
-        test_metrics = SegmentationMetrics(NUM_CLASSES)
+        test_loader = get_dataloaders()['test']
+        self.metrics.reset()
         
-        model.model.eval()
-        print("\n🔍 Prédiction sur le test set...")
-        
+        print("\n🔍 Prédiction et conversion sémantique...")
         with torch.no_grad():
-            for batch in tqdm(test_loader, desc="Testing"):
-                images, masks = batch
-                
-                # Conversion pour YOLO (numpy format)
+            for images, masks in tqdm(test_loader, desc="Testing"):
                 for i in range(images.shape[0]):
-                    img = images[i].cpu().numpy().transpose(1, 2, 0)
-                    img = (img * 255).astype(np.uint8)
-                    gt_mask = masks[i].cpu().numpy()
+                    # --- ÉTAPE CRITIQUE : DÉNORMALISATION ---
+                    # Convertir Tenseur (C, H, W) -> Numpy (H, W, C)
+                    img_np = images[i].permute(1, 2, 0).cpu().numpy()
+                    # Inverser la normalisation du DataLoader
+                    img_raw = (img_np * std + mean) * 255
+                    img_raw = np.clip(img_raw, 0, 255).astype(np.uint8)
+                    # YOLO travaille mieux en BGR (OpenCV format)
+                    img_bgr = cv2.cvtColor(img_raw, cv2.COLOR_RGB2BGR)
                     
-                    # Prédiction YOLO
-                    results = model.predict(img, verbose=False, device=self.device)
+                    # --- PRÉDICTION ---
+                    results = model.predict(img_bgr, verbose=False, device=self.device, imgsz=TARGET_SIZE[0])
                     
-                    # Conversion instance -> semantic mask
-                    # (selon paper section 4.4: pixel assigné à la classe avec highest confidence)
-                    pred_mask = self._convert_instance_to_semantic(
-                        results[0], 
-                        img.shape[:2]
-                    )
+                    # --- CONVERSION INSTANCE -> SÉMANTIQUE ---
+                    # On assigne le pixel à la classe avec le plus haut score de confiance (Paper LADOS Section 4.4)
+                    pred_semantic = self._convert_instance_to_semantic(results[0], TARGET_SIZE)
                     
-                    # Mise à jour des métriques
-                    test_metrics.update(pred_mask, gt_mask)
+                    # Mise à jour de la matrice de confusion
+                    self.metrics.update(pred_semantic, masks[i].cpu().numpy())
         
-        # Calcul des résultats finaux
-        results = test_metrics.get_results()
+        # 3. Récupération et affichage des résultats
+        final_results = self.metrics.get_results()
         
-        print(f"\n✅ Résultats finaux (mIoU): {results['mIoU']:.4f}")
-        print(f"   mAcc: {results['mAcc']:.4f}")
-        print("\n📋 IoU par classe:")
-        for class_id, iou in enumerate(results['class_iou']):
-            class_name = CLASS_NAMES.get(class_id, f"Class_{class_id}")
-            print(f"  {class_name:15s}: {iou:.4f}")
+        print(f"\n✅ mIoU Final (excl. Background) : {final_results['mIoU']:.4f}")
+        print(f"✅ mAcc Final : {final_results['mAcc']:.4f}")
         
-        # Sauvegarder les résultats
+        # Sauvegarde dans le JSON pour compare_models.py
         results_path = OUTPUT_DIR_YOLO / 'test_results.json'
         with open(results_path, 'w') as f:
             json.dump({
-                'mIoU': float(results['mIoU']),
-                'mAcc': float(results['mAcc']),
-                'class_iou': [float(x) for x in results['class_iou']],
+                'mIoU': float(final_results['mIoU']),
+                'mAcc': float(final_results['mAcc']),
+                'class_iou': [float(x) for x in final_results['class_iou']],
                 'class_names': [CLASS_NAMES[i] for i in range(NUM_CLASSES)]
             }, f, indent=2)
-        
-        print(f"\n💾 Résultats sauvegardés dans: {results_path}")
+            
+        print(f"💾 Résultats validés sauvegardés dans : {results_path}")
+    
     
     def _convert_instance_to_semantic(self, result, img_shape):
         """
