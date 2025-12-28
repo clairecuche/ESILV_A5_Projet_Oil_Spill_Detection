@@ -167,7 +167,7 @@ class YOLOv11Trainer:
         
         # 1. Charger le meilleur modèle sauvegardé (Chemin basé sur ta config)
         # Comme OUTPUT_DIR_YOLO = Path('./outputs/yolo') et name = 'yolo_training'
-        best_model_path = Path("/kaggle/working/outputs/yolo/yolo_training/weights/best.pt")
+        best_model_path = Path("/kaggle/working/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt")
         
         if not best_model_path.exists():
             print(f"⚠️ Modèle non trouvé à {best_model_path}")
