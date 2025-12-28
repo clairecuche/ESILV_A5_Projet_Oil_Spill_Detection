@@ -162,7 +162,7 @@ class YOLOv11Trainer:
         Évalue le modèle avec dénormalisation et conversion sémantique.
         """
         print("\n" + "="*50)
-        print("📊 ÉVALUATION FINALE SUR TEST SET (CORRIGÉE)")
+        print("📊 ÉVALUATION FINALE SUR TEST SET")
         print("="*50)
         
         # 1. Charger le meilleur modèle sauvegardé (Chemin basé sur ta config)
@@ -182,7 +182,7 @@ class YOLOv11Trainer:
         std = np.array([0.229, 0.224, 0.225])
         
         test_loader = get_dataloaders()['test']
-        self.metrics.reset()
+        self.val_metrics.reset()
         
         print("\n🔍 Prédiction et conversion sémantique...")
         with torch.no_grad():
@@ -205,10 +205,10 @@ class YOLOv11Trainer:
                     pred_semantic = self._convert_instance_to_semantic(results[0], TARGET_SIZE)
                     
                     # Mise à jour de la matrice de confusion
-                    self.metrics.update(pred_semantic, masks[i].cpu().numpy())
+                    self.val_metrics.update(pred_semantic, masks[i].cpu().numpy())
         
         # 3. Récupération et affichage des résultats
-        final_results = self.metrics.get_results()
+        final_results = self.val_metrics.get_results()
         
         print(f"\n✅ mIoU Final (excl. Background) : {final_results['mIoU']:.4f}")
         print(f"✅ mAcc Final : {final_results['mAcc']:.4f}")
