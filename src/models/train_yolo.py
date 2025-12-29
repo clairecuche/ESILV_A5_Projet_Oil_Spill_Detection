@@ -64,6 +64,57 @@ class YOLOv11Trainer:
         print(f"YOLOv11 Trainer initialisé sur {self.device}.")
         print(f"Poids de classe: {self.class_weights}")
 
+    def _debug_first_prediction(self, test_loader, model):
+        """
+        🔍 Fonction de diagnostic pour vérifier les conversions.
+        À SUPPRIMER après validation.
+        """
+        print("\n" + "="*60)
+        print("🔬 MODE DEBUG - Analyse d'une prédiction")
+        print("="*60)
+        
+        # Prendre la première image
+        images, masks = next(iter(test_loader))
+        img_tensor = images[0]  # [3, H, W]
+        gt_mask = masks[0]      # [H, W]
+        
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        
+        # === VERSION ACTUELLE (BUGUÉE) ===
+        img_np = img_tensor.permute(1, 2, 0).cpu().numpy()
+        img_buggy = (img_np * std + mean) * 255
+        img_buggy = np.clip(img_buggy, 0, 255).astype(np.uint8)
+        
+        print(f"\n❌ Méthode ACTUELLE (buguée):")
+        print(f"   Min pixel: {img_buggy.min()}, Max pixel: {img_buggy.max()}")
+        print(f"   Mean pixel: {img_buggy.mean():.2f}")
+        
+        # === VERSION CORRIGÉE ===
+        img_fixed = img_np * std + mean  # [0, 1]
+        img_fixed = (img_fixed * 255).clip(0, 255).astype(np.uint8)
+        
+        print(f"\n✅ Méthode CORRIGÉE:")
+        print(f"   Min pixel: {img_fixed.min()}, Max pixel: {img_fixed.max()}")
+        print(f"   Mean pixel: {img_fixed.mean():.2f}")
+        
+        # Prédiction YOLO avec les deux versions
+        print(f"\n🔮 Prédictions YOLO:")
+        
+        results_buggy = model.predict(img_buggy, verbose=False, device=self.device, imgsz=TARGET_SIZE[0])
+        results_fixed = model.predict(img_fixed, verbose=False, device=self.device, imgsz=TARGET_SIZE[0])
+        
+        print(f"   Buggy: {len(results_buggy[0].boxes) if results_buggy[0].boxes else 0} détections")
+        print(f"   Fixed: {len(results_fixed[0].boxes) if results_fixed[0].boxes else 0} détections")
+        
+        # Shapes
+        print(f"\n📏 Shapes:")
+        print(f"   Image tensor: {img_tensor.shape}")
+        print(f"   GT mask: {gt_mask.shape}")
+        print(f"   Image uint8: {img_fixed.shape}")
+        
+        print("="*60 + "\n")
+
     def _initialize_model(self):
         """Initialise YOLOv11m-seg avec poids COCO."""
         model = YOLO('yolo11m-seg.pt')  # YOLOv11m segmentation
@@ -166,8 +217,8 @@ class YOLOv11Trainer:
         print("="*50)
         
         # 1. Charger le meilleur modèle sauvegardé (Chemin basé sur ta config)
-        # Comme OUTPUT_DIR_YOLO = Path('./outputs/yolo') et name = 'yolo_training'
         best_model_path = Path("/kaggle/working/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt")
+        #best_model_path = Path(r"C:/Users/benoi/OneDrive - De Vinci/A5 ESILV/CV/Project/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt")
         
         if not best_model_path.exists():
             print(f"⚠️ Modèle non trouvé à {best_model_path}")
@@ -183,37 +234,64 @@ class YOLOv11Trainer:
         
         test_loader = get_dataloaders()['test']
         self.val_metrics.reset()
+
+        self._debug_first_prediction(test_loader, model)
         
         print("\n🔍 Prédiction et conversion sémantique...")
         with torch.no_grad():
-            for images, masks in tqdm(test_loader, desc="Testing"):
+            for batch_idx, (images, masks) in enumerate(tqdm(test_loader, desc="Testing")):
                 for i in range(images.shape[0]):
-                    # --- ÉTAPE CRITIQUE : DÉNORMALISATION ---
-                    # Convertir Tenseur (C, H, W) -> Numpy (H, W, C)
+                    # === CORRECTION CRITIQUE : DÉNORMALISATION ===
+                    # Étape 1: Tensor [C, H, W] → Numpy [H, W, C]
                     img_np = images[i].permute(1, 2, 0).cpu().numpy()
-                    # Inverser la normalisation du DataLoader
-                    img_raw = (img_np * std + mean) * 255
-                    img_raw = np.clip(img_raw, 0, 255).astype(np.uint8)
-                    # YOLO travaille mieux en BGR (OpenCV format)
-                    img_bgr = cv2.cvtColor(img_raw, cv2.COLOR_RGB2BGR)
                     
-                    # --- PRÉDICTION ---
-                    results = model.predict(img_bgr, verbose=False, device=self.device, imgsz=TARGET_SIZE[0])
+                    # Étape 2: Dénormaliser (résultat en [0, 1])
+                    img_denorm = img_np * std + mean
                     
-                    # --- CONVERSION INSTANCE -> SÉMANTIQUE ---
-                    # On assigne le pixel à la classe avec le plus haut score de confiance (Paper LADOS Section 4.4)
-                    pred_semantic = self._convert_instance_to_semantic(results[0], TARGET_SIZE)
+                    # Étape 3: Convertir en uint8 [0, 255]
+                    img_uint8 = (img_denorm * 255).clip(0, 255).astype(np.uint8)
+                    
+                    # === PRÉDICTION YOLO ===
+                    results = model.predict(
+                        img_uint8,  # RGB uint8
+                        verbose=False, 
+                        device=self.device, 
+                        imgsz=TARGET_SIZE[0]
+                    )
+                    # === CONVERSION INSTANCE → SÉMANTIQUE ===
+                    # Utiliser la taille du masque GT (normalement 640×640)
+                    gt_mask = masks[i].cpu().numpy()
+                    pred_semantic = self._convert_instance_to_semantic(
+                        results[0], 
+                        gt_mask.shape  # (H, W) du GT
+                    )
+                
+                    # === DEBUG (première image seulement) ===
+                    if batch_idx == 0 and i == 0:
+                        print(f"\n[DEBUG] Première prédiction:")
+                        print(f"  Image shape: {img_uint8.shape}")
+                        print(f"  GT mask shape: {gt_mask.shape}")
+                        print(f"  Pred mask shape: {pred_semantic.shape}")
+                        print(f"  GT classes: {np.unique(gt_mask)}")
+                        print(f"  Pred classes: {np.unique(pred_semantic)}")
+                        if results[0].boxes is not None:
+                            print(f"  Nb détections YOLO: {len(results[0].boxes)}")
+                            print(f"  Classes YOLO: {results[0].boxes.cls.cpu().numpy()}")
+                            print(f"  Confidences: {results[0].boxes.conf.cpu().numpy()[:5]}...")  # 5 premières
                     
                     # Mise à jour de la matrice de confusion
-                    self.val_metrics.update(pred_semantic, masks[i].cpu().numpy())
-        
+                    self.val_metrics.update(pred_semantic, gt_mask)
+    
         # 3. Récupération et affichage des résultats
         final_results = self.val_metrics.get_results()
-        
         print(f"\n✅ mIoU Final (excl. Background) : {final_results['mIoU']:.4f}")
         print(f"✅ mAcc Final : {final_results['mAcc']:.4f}")
         
-        # Sauvegarde dans le JSON pour compare_models.py
+        print("\n📋 IoU par classe:")
+        for i, iou in enumerate(final_results['class_iou']):
+            print(f"  {CLASS_NAMES[i]:15s}: {iou:.4f}")
+        
+        # Sauvegarde JSON
         results_path = OUTPUT_DIR_YOLO / 'test_results.json'
         with open(results_path, 'w') as f:
             json.dump({
@@ -223,8 +301,8 @@ class YOLOv11Trainer:
                 'class_names': [CLASS_NAMES[i] for i in range(NUM_CLASSES)]
             }, f, indent=2)
             
-        print(f"💾 Résultats validés sauvegardés dans : {results_path}")
-    
+        print(f"\n💾 Résultats validés sauvegardés dans : {results_path}")
+                    
     
     def _convert_instance_to_semantic(self, result, img_shape):
         """

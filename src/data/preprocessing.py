@@ -134,104 +134,77 @@ def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train', 
 
 def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
     """
-    Convertit les annotations COCO en format YOLO pour la segmentation.
-    
-    Format YOLO pour segmentation:
-    <class_id> <x1> <y1> <x2> <y2> ... <xn> <yn>
-    où les coordonnées sont normalisées entre 0 et 1.
-    
-    Args:
-        dataset_path: Path vers le dataset LADOS (contient train/, valid/, test/)
-        output_path: Path de sortie (par défaut: dataset_path/yolo_format/)
+    NOUVELLE MÉTHODE (Corrigée) : Mappe les noms de classes COCO vers CLASS_TO_ID
+    et COPIE les images vers le dossier de destination.
     """
     dataset_path = Path(dataset_path)
-    if output_path is None:
-        output_path = dataset_path / 'yolo_format'
-    else:
-        output_path = Path(output_path)
-    
-    # Créer la structure YOLO
+    output_path = Path(output_path) if output_path else dataset_path / 'yolo_format'
     output_path.mkdir(exist_ok=True, parents=True)
     
     for split in ['train', 'valid', 'test']:
         print(f"\n📦 Conversion du split: {split}")
-        
-        # Paths
         images_dir = output_path / 'images' / split
         labels_dir = output_path / 'labels' / split
         images_dir.mkdir(parents=True, exist_ok=True)
         labels_dir.mkdir(parents=True, exist_ok=True)
         
-        # Charger les annotations COCO
         coco_json = dataset_path / split / '_annotations.coco.json'
-        if not coco_json.exists():
-            print(f"⚠️ Pas d'annotations COCO pour {split}, skip.")
+        if not coco_json.exists(): 
+            print(f"⚠️ Pas d'annotations pour {split}")
             continue
             
         with open(coco_json, 'r') as f:
             coco_data = json.load(f)
         
-        # Créer un mapping image_id -> annotations
+        # 1. CRÉER LE PONT : COCO ID -> NOM -> TON ID (config.py)
+        coco_id_to_project_id = {}
+        for cat in coco_data['categories']:
+            raw_name = cat['name'].lower().replace(' ', '-')
+            # Mapping spécifique pour Roboflow
+            if raw_name == 'oils-emulsions': raw_name = 'oil'
+            
+            project_id = CLASS_TO_ID.get(raw_name, 0)
+            coco_id_to_project_id[cat['id']] = project_id
+            print(f"  Mapping COCO {cat['id']} ({cat['name']}) -> Project ID {project_id}")
+
         img_to_anns = {}
         for ann in coco_data['annotations']:
-            img_id = ann['image_id']
-            if img_id not in img_to_anns:
-                img_to_anns[img_id] = []
-            img_to_anns[img_id].append(ann)
+            img_to_anns.setdefault(ann['image_id'], []).append(ann)
         
-        # Traiter chaque image
         for img_info in tqdm(coco_data['images'], desc=f"Converting {split}"):
-            img_id = img_info['id']
             img_name = img_info['file_name']
-            img_width = img_info['width']
-            img_height = img_info['height']
             
-            # Copier l'image
+            # --- AJOUT : COPIE PHYSIQUE DE L'IMAGE ---
             src_img = dataset_path / split / img_name
             dst_img = images_dir / img_name
             if src_img.exists():
-                shutil.copy2(src_img, dst_img)
+                shutil.copy2(src_img, dst_img) # Copie l'image vers yolo_format
             
-            # Créer le fichier label correspondant
             label_file = labels_dir / (Path(img_name).stem + '.txt')
-            
-            # Extraire les annotations pour cette image
-            anns = img_to_anns.get(img_id, [])
+            anns = img_to_anns.get(img_info['id'], [])
             
             with open(label_file, 'w') as f:
                 for ann in anns:
-                    # Classe (YOLO commence à 0)
-                    class_id = ann['category_id']
+                    # Utilisation du mapping corrigé
+                    class_id = coco_id_to_project_id.get(ann['category_id'], 0)
                     
-                    # Extraire le polygone de segmentation
-                    if 'segmentation' not in ann or not ann['segmentation']:
-                        continue
+                    if 'segmentation' not in ann or not ann['segmentation']: continue
                     
-                    # COCO peut avoir plusieurs polygones par annotation
                     for segmentation in ann['segmentation']:
-                        if len(segmentation) < 6:  # Au moins 3 points
-                            continue
-                        
-                        # Normaliser les coordonnées
+                        if len(segmentation) < 6: continue
                         normalized_coords = []
                         for i in range(0, len(segmentation), 2):
-                            x = segmentation[i] / img_width
-                            y = segmentation[i + 1] / img_height
-                            # Clipper entre 0 et 1
-                            x = max(0, min(1, x))
-                            y = max(0, min(1, y))
+                            # Normalisation relative aux dimensions de l'image
+                            x = max(0, min(1, segmentation[i] / img_info['width']))
+                            y = max(0, min(1, segmentation[i + 1] / img_info['height']))
                             normalized_coords.extend([x, y])
                         
-                        # Écrire au format YOLO
                         coords_str = ' '.join([f'{c:.6f}' for c in normalized_coords])
                         f.write(f"{class_id} {coords_str}\n")
     
-    # Créer le fichier data.yaml
+    # Génération du YAML pour YOLO
     create_yolo_yaml(output_path, dataset_path)
-    
-    print(f"\n✅ Conversion terminée! Données YOLO dans: {output_path}")
     return output_path
-
 
 def create_yolo_yaml(yolo_path, original_dataset_path):
     """
