@@ -25,7 +25,7 @@ NUM_CLASSES_SEG = len(CLASS_NAMES_SEG)  # 6 classes
 # Configuration pour YOLO (Instance : les classes commencent à 0)
 NUM_CLASSES_YOLO = len(YOLO_CLASSES)    # 5 classes
 
-TARGET_SIZE: Tuple[int, int] = (320, 320)
+TARGET_SIZE: Tuple[int, int] = (640, 640)
 DATA_DIR = Path('./LADOS-2')
 
 # --- Paramètres d'Entraînement SegFormer (comme le paper pour l'instant)---
