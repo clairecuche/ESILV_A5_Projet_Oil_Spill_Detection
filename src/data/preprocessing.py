@@ -12,6 +12,7 @@ import shutil
 from tqdm import tqdm
 from pycocotools import mask as mask_utils
 import yaml
+import config
 
 def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARGET_SIZE) -> None:
     """
@@ -105,47 +106,60 @@ def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARG
     print("TERMINÉ : Conversion des annotations en masques.")
 
 
-def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train') -> torch.Tensor:
+def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train', use_paper_method: bool = True) -> torch.Tensor:
     """
-    Calcule les poids des classes en utilisant la méthode de la Fréquence Inverse Médiane.
+    Calcule les poids des classes pour SegFormer (6 classes).
+    Méthode par défaut : Ratio d'instances (selon Équation 1 du papier LADOS).
     """
-    num_classes = NUM_CLASSES_SEG
+    num_classes = config.NUM_CLASSES_SEG
     masks_dir = Path(dataset_path) / split / 'masks'
-    pixel_counts = np.zeros(num_classes, dtype=np.int64)
-    total_pixels = 0
     mask_files = list(masks_dir.glob('*.png'))
 
     if not mask_files:
         print(f"ERREUR: Aucun masque trouvé dans {masks_dir}.")
-        return torch.ones(num_classes).float() # Retourne des poids unitaires par défaut
+        return torch.ones(num_classes).float()
 
-    print(f"\n🔄 Démarrage du calcul des poids sur {len(mask_files)} masques...")
-
-    for mask_path in mask_files:
-        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-        if mask is None: continue
+    if use_paper_method:
+        # --- MÉTHODE DU PAPIER LADOS (Basée sur les instances) ---
+        # On compte la présence de chaque classe dans chaque image
+        class_counts = np.zeros(num_classes, dtype=np.int64)
         
-        mask = np.clip(mask, 0, num_classes - 1) 
-        unique, counts = np.unique(mask, return_counts=True)
-        counts_map = dict(zip(unique, counts))
-        
-        for class_id in range(num_classes):
-            count = counts_map.get(class_id, 0)
-            pixel_counts[class_id] += count
-            total_pixels += count
+        for mask_path in tqdm(mask_files, desc="Analyse des instances"):
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            if mask is None: continue
             
-    frequencies = pixel_counts / total_pixels
-    frequencies[frequencies == 0] = 1e-6 # Évite la division par zéro
-    
-    # Calcul des poids (Median Frequency Balancing)
-    median_frequency = np.median(frequencies)
-    class_weights = median_frequency / frequencies
-    
-    print("--- Résumé des Poids de Classe ---")
-    for i, name in enumerate(CLASS_NAMES_SEG):
-        print(f"Classe {id} ({name}): Fréquence = {frequencies[i]:.4f}, Poids = {class_weights[i]:.2f}")
+            # On récupère les IDs présents dans l'image (instances)
+            unique_classes = np.unique(mask)
+            for cls_id in unique_classes:
+                if 0 <= cls_id < num_classes:
+                    class_counts[cls_id] += 1
+        
+        total_instances = np.sum(class_counts)
+        # Formule du papier : Total / (Instances_i * Nb_Classes) [cite: 276]
+        weights = total_instances / (class_counts * num_classes)
+        
+    else:
+        # --- MÉTHODE PIXEL-BASED (Votre méthode actuelle corrigée) ---
+        pixel_counts = np.zeros(num_classes, dtype=np.int64)
+        for mask_path in tqdm(mask_files, desc="Analyse des pixels"):
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            if mask is None: continue
+            counts = np.bincount(mask.flatten(), minlength=num_classes)
+            pixel_counts += counts[:num_classes]
 
-    return torch.from_numpy(class_weights).float()
+        frequencies = pixel_counts / np.sum(pixel_counts)
+        frequencies[frequencies == 0] = 1e-6
+        median_freq = np.median(frequencies)
+        weights = median_freq / frequencies
+
+    # Nettoyage des valeurs infinies ou trop élevées
+    weights = np.nan_to_num(weights, nan=1.0, posinf=10.0)
+
+    print("\n📊 Résumé des Poids de Classe (SegFormer) :")
+    for i, name in enumerate(config.CLASS_NAMES_SEG):
+        print(f"  ID {i} ({name:12}): Poids = {weights[i]:.2f}")
+
+    return torch.from_numpy(weights).float()
 
 def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
     dataset_path = Path(dataset_path)

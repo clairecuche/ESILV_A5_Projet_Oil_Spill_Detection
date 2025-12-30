@@ -29,24 +29,33 @@ class YOLOv11Trainer:
     
     def __init__(self):
         self.device = torch.device(DEVICE)
-        self.num_classes = NUM_CLASSES
+        
+        # ✅ FIX 1: Clarifier les num_classes
+        # YOLO entraîne sur 5 classes (sans Background)
+        # Mais on évalue sur 6 classes (avec Background) pour comparer avec SegFormer
+        self.num_classes_yolo = NUM_CLASSES_YOLO  # 5 (pour YOLO)
+        self.num_classes_eval = NUM_CLASSES       # 6 (pour évaluation)
         
         # 1. Modèle YOLOv11 (pré-entraîné sur COCO)
         self.model = self._initialize_model()
         
         # 2. Poids de classe pour weighted BCE loss
-        weights_path = DATA_DIR / 'class_weights.pt'
+        weights_path = DATA_DIR / 'yolo_class_weights.pt'
         if weights_path.exists():
             self.class_weights = torch.load(weights_path)
         else:
-            self.class_weights = calculate_class_weights()
+            # Calculer les poids pour les 5 classes d'objets (sans BG)
+            self.class_weights = calculate_class_weights(split='train', use_paper_method=True)
+            # Si la fonction renvoie 6 poids (avec BG), on prend les 5 derniers
+            if len(self.class_weights) == 6:
+                self.class_weights = self.class_weights[1:]
             torch.save(self.class_weights, weights_path)
         
         # 3. Métriques et Suivi
-        self.train_metrics = SegmentationMetrics(NUM_CLASSES)
-        self.val_metrics = SegmentationMetrics(NUM_CLASSES)
+        # ✅ FIX 2: Utiliser 6 classes pour l'évaluation (cohérent avec GT)
+        self.val_metrics = SegmentationMetrics(num_classes=self.num_classes_eval)
         self.best_miou = -1.0
-        self.best_map = -1.0  # Pour mAP@50-95 (utilisé pour early stopping)
+        self.best_map = -1.0
         self.patience_counter = 0
         self.history = {
             'train_loss': [], 
@@ -62,6 +71,8 @@ class YOLOv11Trainer:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
         print(f"YOLOv11 Trainer initialisé sur {self.device}.")
+        print(f"Classes YOLO (entraînement): {self.num_classes_yolo}")
+        print(f"Classes évaluation (avec BG): {self.num_classes_eval}")
         print(f"Poids de classe: {self.class_weights}")
 
     def _initialize_model(self):
@@ -74,7 +85,6 @@ class YOLOv11Trainer:
         Prépare les données au format YOLO (conversion des masques en polygones).
         Utilise le module yolo_data_converter.
         """
-        
         yolo_data_dir = DATA_DIR / 'yolo_format'
         yaml_path = yolo_data_dir / 'data.yaml'
         
@@ -108,7 +118,7 @@ class YOLOv11Trainer:
         results = self.model.train(
             data=data_yaml_path,
             epochs=NUM_EPOCHS_YOLO,  # Max epochs (early stopping activé)
-            batch=BATCH_SIZE_YOLO,  # 32 selon paper
+            batch=BATCH_SIZE_YOLO,   # 32 selon paper
             imgsz=TARGET_SIZE[0],
             device=self.device,
             
@@ -121,7 +131,7 @@ class YOLOv11Trainer:
             patience=PATIENCE,
             
             # Augmentations (selon paper section 4.3)
-            mosaic=1.0,  # Mosaic augmentation
+            mosaic=1.0,   # Mosaic augmentation
             hsv_h=0.015,  # HSV-Hue augmentation
             hsv_s=0.7,    # HSV-Saturation
             hsv_v=0.4,    # HSV-Value
@@ -159,20 +169,30 @@ class YOLOv11Trainer:
 
     def _evaluate_with_metrics(self):
         """
-        Évalue le modèle avec dénormalisation et conversion sémantique.
+        Évalue le modèle avec dénormalisation et conversion sémantique CORRIGÉE.
         """
         print("\n" + "="*50)
         print("📊 ÉVALUATION FINALE SUR TEST SET")
         print("="*50)
         
-        # 1. Charger le meilleur modèle sauvegardé (Chemin basé sur ta config)
-        best_model_path = Path("/kaggle/working/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt")
-        #best_model_path = Path(r"C:/Users/benoi/OneDrive - De Vinci/A5 ESILV/CV/Project/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt")
+        # 1. Charger le meilleur modèle sauvegardé
+        # ✅ Essayer plusieurs chemins possibles
+        possible_paths = [
+            OUTPUT_DIR_YOLO / 'yolo_training' / 'weights' / 'best.pt',
+            Path("/kaggle/working/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt"),
+            Path(r"C:\Users\benoi\OneDrive - De Vinci\A5 ESILV\CV\Project\ESILV_A5_Projet_Oil_Spill_Detection\outputs\yolo\yolo_training\weights\best.pt"),
+            Path("/kaggle/working/yolo/yolo_training/weights/best.pt"),
+            Path("output/best.pt")
+        ]
         
-        if not best_model_path.exists():
-            print(f"⚠️ Modèle non trouvé à {best_model_path}")
-            # Fallback : on cherche dans le dossier project par défaut d'Ultralytics si besoin
-            best_model_path = Path("/kaggle/working/yolo/yolo_training/weights/best.pt")
+        best_model_path = None
+        for path in possible_paths:
+            if path.exists():
+                best_model_path = path
+                break
+        
+        if best_model_path is None:
+            raise FileNotFoundError("❌ Aucun modèle YOLO trouvé dans les chemins possibles!")
             
         print(f"🔄 Chargement des poids : {best_model_path}")
         model = YOLO(str(best_model_path))
@@ -181,68 +201,128 @@ class YOLOv11Trainer:
         mean = np.array([0.485, 0.456, 0.406])
         std = np.array([0.229, 0.224, 0.225])
         
+        # 3. Charger le test loader
         test_loader = get_dataloaders()['test']
+        
+        # ✅ FIX 3: Vérifier qu'on est bien sur le test set
+        print(f"\n🔍 Vérification du split:")
+        print(f"   Nombre d'images test: {len(test_loader.dataset)}")
+        print(f"   Attendu (paper LADOS): 343 images")
+        if len(test_loader.dataset) != 343:
+            print(f"   ⚠️ WARNING: Le nombre d'images ne correspond pas au paper!")
+        
         self.val_metrics.reset()
+        
+        # ✅ FIX 4: Compteurs pour debug
+        total_predictions = 0
+        total_background_pixels = 0
+        total_non_background_pixels = 0
         
         print("\n🔍 Prédiction et conversion sémantique...")
         with torch.no_grad():
             for batch_idx, (images, masks) in enumerate(tqdm(test_loader, desc="Testing")):
                 for i in range(images.shape[0]):
-                    # === CORRECTION CRITIQUE : DÉNORMALISATION ===
-                    # Étape 1: Tensor [C, H, W] → Numpy [H, W, C]
+                    # === DÉNORMALISATION CORRECTE ===
                     img_np = images[i].permute(1, 2, 0).cpu().numpy()
-                    
-                    # Étape 2: Dénormaliser (résultat en [0, 1])
                     img_denorm = img_np * std + mean
-                    
-                    # Étape 3: Convertir en uint8 [0, 255]
                     img_uint8 = (img_denorm * 255).clip(0, 255).astype(np.uint8)
                     
-                    # === PRÉDICTION YOLO ===
+                    # === PRÉDICTION YOLO AVEC SEUILS OPTIMISÉS ===
                     results = model.predict(
-                        img_uint8,  # RGB uint8
-                        verbose=False, 
-                        device=self.device, 
+                        img_uint8,
+                        verbose=False,
+                        device=self.device,
                         imgsz=TARGET_SIZE[0],
-                        conf=0.15,
-                        iou=0.5
+                        conf=0.15,  # ✅ Seuil bas pour plus de détections
+                        iou=0.4     # ✅ NMS moins agressif
                     )
-                    # === CONVERSION INSTANCE → SÉMANTIQUE ===
-                    # Utiliser la taille du masque GT (normalement 640×640)
+                    
+                    # === CONVERSION INSTANCE → SÉMANTIQUE AVEC MAPPING ===
                     gt_mask = masks[i].cpu().numpy()
                     pred_semantic = self._convert_instance_to_semantic(
-                        results[0], 
-                        gt_mask.shape  # (H, W) du GT
+                        results[0],
+                        gt_mask.shape
                     )
-                                    
-                    # Mise à jour de la matrice de confusion
+                    
+                    # Debug: Compter les détections
+                    if results[0].boxes is not None:
+                        total_predictions += len(results[0].boxes)
+                    
+                    bg_pixels = (pred_semantic == 0).sum()
+                    non_bg_pixels = (pred_semantic > 0).sum()
+                    total_background_pixels += bg_pixels
+                    total_non_background_pixels += non_bg_pixels
+                    
+                    # Debug première image
+                    if batch_idx == 0 and i == 0:
+                        print(f"\n[DEBUG] Première prédiction:")
+                        print(f"  Image shape: {img_uint8.shape}")
+                        print(f"  GT mask shape: {gt_mask.shape}")
+                        print(f"  GT classes: {np.unique(gt_mask)}")
+                        print(f"  Pred classes: {np.unique(pred_semantic)}")
+                        if results[0].boxes is not None:
+                            print(f"  Nb détections YOLO: {len(results[0].boxes)}")
+                            print(f"  Classes YOLO (0-4): {results[0].boxes.cls.cpu().numpy()[:5]}")
+                            print(f"  Confidences: {results[0].boxes.conf.cpu().numpy()[:5]}")
+                        print(f"  Pixels Background: {bg_pixels} ({bg_pixels/(gt_mask.size)*100:.1f}%)")
+                        print(f"  Pixels détectés: {non_bg_pixels} ({non_bg_pixels/(gt_mask.size)*100:.1f}%)")
+                    
+                    # Mise à jour métriques
                     self.val_metrics.update(pred_semantic, gt_mask)
-    
-        # 3. Récupération et affichage des résultats
+        
+        # 4. Statistiques globales
+        total_pixels = total_background_pixels + total_non_background_pixels
+        print(f"\n📊 Statistiques globales:")
+        print(f"   Total détections YOLO: {total_predictions}")
+        print(f"   Pixels Background: {total_background_pixels} ({total_background_pixels/total_pixels*100:.1f}%)")
+        print(f"   Pixels détectés: {total_non_background_pixels} ({total_non_background_pixels/total_pixels*100:.1f}%)")
+        
+        # 5. Résultats finaux
         final_results = self.val_metrics.get_results()
+        
         print(f"\n✅ mIoU Final (excl. Background) : {final_results['mIoU']:.4f}")
         print(f"✅ mAcc Final : {final_results['mAcc']:.4f}")
         
         print("\n📋 IoU par classe:")
         for i, iou in enumerate(final_results['class_iou']):
-            print(f"  {CLASS_NAMES[i]:15s}: {iou:.4f}")
+            print(f"  {CLASS_NAMES_SEG[i]:15s}: {iou:.4f}")
         
-        # Sauvegarde JSON
+        # 6. Matrice de confusion (optionnel mais utile)
+        print("\n📊 Matrice de Confusion (premières lignes):")
+        conf_matrix = self.val_metrics.confusion_matrix
+        for i in range(min(6, self.num_classes_eval)):
+            true_class = CLASS_NAMES_SEG[i]
+            total = conf_matrix[i].sum()
+            if total > 0:
+                print(f"\n{true_class} (GT) - Total pixels: {total:.0f}")
+                for j in range(min(6, self.num_classes_eval)):
+                    pred_class = CLASS_NAMES_SEG[j]
+                    count = conf_matrix[i, j]
+                    percentage = (count / total * 100) if total > 0 else 0
+                    if percentage > 5:  # Afficher si > 5%
+                        print(f"  → {pred_class:15s}: {percentage:5.1f}%")
+        
+        # 7. Sauvegarde JSON
         results_path = OUTPUT_DIR_YOLO / 'test_results.json'
         with open(results_path, 'w') as f:
             json.dump({
                 'mIoU': float(final_results['mIoU']),
                 'mAcc': float(final_results['mAcc']),
                 'class_iou': [float(x) for x in final_results['class_iou']],
-                'class_names': [CLASS_NAMES[i] for i in range(NUM_CLASSES)]
+                'class_names': [CLASS_NAMES_SEG[i] for i in range(self.num_classes_eval)],
+                'conf_threshold': 0.15,
+                'iou_threshold': 0.4,
+                'total_detections': int(total_predictions),
+                'background_ratio': float(total_background_pixels / total_pixels)
             }, f, indent=2)
             
         print(f"\n💾 Résultats validés sauvegardés dans : {results_path}")
-                    
     
     def _convert_instance_to_semantic(self, result, img_shape):
         """
         Convertit les masques d'instance YOLO en masque sémantique.
+        
+        ✅ FIX CRITIQUE: Mapper YOLO classes (0-4) → GT classes (1-5)
         
         Selon le paper (section 4.4):
         "we assigned each predicted pixel the class with the highest confidence score"
@@ -252,10 +332,10 @@ class YOLOv11Trainer:
             img_shape: (H, W) de l'image
             
         Returns:
-            semantic_mask: np.ndarray de shape (H, W) avec les class IDs
+            semantic_mask: np.ndarray de shape (H, W) avec les class IDs GT (0-5)
         """
         H, W = img_shape
-        semantic_mask = np.zeros((H, W), dtype=np.int64)
+        semantic_mask = np.zeros((H, W), dtype=np.int64)  # Background = 0 par défaut
         confidence_map = np.zeros((H, W), dtype=np.float32)
         
         if result.masks is None:
@@ -263,22 +343,31 @@ class YOLOv11Trainer:
         
         # Récupérer les masques, classes et confidences
         masks = result.masks.data.cpu().numpy()  # (N, H, W)
-        classes = result.boxes.cls.cpu().numpy().astype(int)  # (N,)
+        classes = result.boxes.cls.cpu().numpy().astype(int)  # (N,) - Classes YOLO 0-4
         confidences = result.boxes.conf.cpu().numpy()  # (N,)
         
         # Redimensionner les masques à la taille de l'image
-        for mask, cls, conf in zip(masks, classes, confidences):
+        for mask, yolo_cls, conf in zip(masks, classes, confidences):
             # Resize mask
             mask_resized = cv2.resize(mask, (W, H), interpolation=cv2.INTER_LINEAR)
             mask_binary = mask_resized > 0.5
             
-            # Pour chaque pixel du masque, garder la classe avec la plus haute confiance
+            # ✅ FIX CRITIQUE: MAPPING YOLO → GT
+            # YOLO classes: 0=Oil, 1=Emulsion, 2=Sheen, 3=Ship, 4=Oil-platform
+            # GT classes:   1=Oil, 2=Emulsion, 3=Sheen, 4=Ship, 5=Oil-platform
+            # Mapping simple: gt_cls = yolo_cls + 1
+            gt_cls = yolo_cls +1
+            
+            # Pour chaque pixel, garder la classe avec la plus haute confiance
             update_mask = (mask_binary) & (conf > confidence_map)
-            semantic_mask[update_mask] = cls
+            semantic_mask[update_mask] = gt_cls
             confidence_map[update_mask] = conf
         
         return semantic_mask
 
+
 if __name__ == '__main__':
     trainer = YOLOv11Trainer()
     trainer.train()
+    
+    

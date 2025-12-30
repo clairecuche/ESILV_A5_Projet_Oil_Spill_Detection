@@ -1,13 +1,13 @@
 import numpy as np
 import torch
-from config import NUM_CLASSES
+from config import NUM_CLASSES_SEG
 
 class SegmentationMetrics:
     """
     Calcule mIoU et mAcc selon les formules du paper LADOS (Section 4.4).
     Exclut le background (ID 0) du calcul du mIoU final.
     """
-    def __init__(self, num_classes=NUM_CLASSES, ignore_index=None):
+    def __init__(self, num_classes=NUM_CLASSES_SEG, ignore_index=None):
         self.num_classes = num_classes
         self.ignore_index = ignore_index
         self.reset()
@@ -16,8 +16,8 @@ class SegmentationMetrics:
         self.confusion_matrix = np.zeros((self.num_classes, self.num_classes))
     
     def update(self, pred, target):
-        if torch.is_tensor(pred): pred = pred.cpu().numpy()
-        if torch.is_tensor(target): target = target.cpu().numpy()
+        if torch.is_tensor(pred): pred = pred.detach().cpu().numpy()
+        if torch.is_tensor(target): target = target.detach().cpu().numpy()
         
         pred, target = pred.flatten(), target.flatten()
         
@@ -25,9 +25,18 @@ class SegmentationMetrics:
             mask = target != self.ignore_index
             pred, target = pred[mask], target[mask]
         
-        for t, p in zip(target, pred):
-            if 0 <= t < self.num_classes and 0 <= p < self.num_classes:
-                self.confusion_matrix[int(t), int(p)] += 1
+        # Optimisation : On utilise bincount pour la matrice de confusion (plus rapide que la boucle for)
+        # Filtre les indices hors limites au cas où
+        valid_indices = (target >= 0) & (target < self.num_classes) & \
+                        (pred >= 0) & (pred < self.num_classes)
+        
+        category_indices = self.num_classes * target[valid_indices].astype(int) + \
+                          pred[valid_indices].astype(int)
+        
+        self.confusion_matrix += np.bincount(
+            category_indices, 
+            minlength=self.num_classes**2
+        ).reshape(self.num_classes, self.num_classes)
     
     def get_results(self):
         TP = np.diag(self.confusion_matrix)

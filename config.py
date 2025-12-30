@@ -16,6 +16,7 @@ YOLO_CLASSES: list[str] = [
 # Mapping pour le convertisseur COCO -> YOLO
 # Utilise les noms de ton JSON Roboflow comme clés
 CLASS_TO_ID_YOLO: Dict[str, int] = {name: i for i, name in enumerate(YOLO_CLASSES)}
+NUM_CLASSES =6
 
 # Configuration pour SegFormer (Sémantique : nécessite le Background en ID 0)
 CLASS_NAMES_SEG = ['background'] + YOLO_CLASSES
@@ -24,7 +25,7 @@ NUM_CLASSES_SEG = len(CLASS_NAMES_SEG)  # 6 classes
 # Configuration pour YOLO (Instance : les classes commencent à 0)
 NUM_CLASSES_YOLO = len(YOLO_CLASSES)    # 5 classes
 
-TARGET_SIZE: Tuple[int, int] = (640, 640)
+TARGET_SIZE: Tuple[int, int] = (320, 320)
 DATA_DIR = Path('./LADOS-2')
 
 # --- Paramètres d'Entraînement SegFormer (comme le paper pour l'instant)---
@@ -50,6 +51,6 @@ MODEL_NAME_YOLO = 'yolo11m-seg.pt'
 
 # --- Hardware ---
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-NUM_WORKERS = 8
+NUM_WORKERS =8
 PIN_MEMORY = True 
 PREFETCH_FACTOR = 2
