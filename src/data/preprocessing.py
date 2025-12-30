@@ -7,7 +7,7 @@ import torch
 from pathlib import Path
 import os
 from typing import Dict, Tuple
-from config import CLASS_TO_ID, NUM_CLASSES, TARGET_SIZE, DATA_DIR
+from config import TARGET_SIZE, DATA_DIR, YOLO_CLASSES, NUM_CLASSES_SEG, CLASS_NAMES_SEG, NUM_CLASSES_YOLO
 import shutil
 from tqdm import tqdm
 from pycocotools import mask as mask_utils
@@ -19,6 +19,17 @@ def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARG
     avec mise à l'échelle des coordonnées.
     """
     dataset_path_p = Path(dataset_path)
+
+    # Mapping spécifique pour SegFormer (Background est inclus en 0)
+    # On recrée un dictionnaire de traduction local pour être sûr
+    translation_table_seg = {
+        "oil": 1,
+        "emulsion": 2,
+        "sheen": 3,
+        "ship": 4,
+        "oil-platform": 5,
+        "oils-emulsions": 1 # Super-catégorie Roboflow par défaut sur oil
+    }
 
     for split in ['train', 'valid', 'test']:
         split_dir = dataset_path_p / split
@@ -65,8 +76,11 @@ def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARG
             mask = np.zeros(target_size[::-1], dtype=np.uint8) # (H, W)
 
             for ann in anns:
-                category_name = categories[ann['category_id']].lower().replace(' ', '-')
-                class_id = CLASS_TO_ID.get(category_name, 0)
+                category_name = categories[ann['category_id']].lower().strip()
+                class_id = translation_table_seg.get(category_name, 0)
+
+                # Si le nom est inconnu ou oils-emulsions, on évite d'écraser si c'est déjà annoté
+                if class_id == 0: continue
 
                 if 'segmentation' in ann and ann['segmentation']:
                     seg = ann['segmentation']
@@ -87,14 +101,15 @@ def convert_coco_to_masks(dataset_path: str, target_size: Tuple[int, int] = TARG
             cv2.imwrite(str(masks_dir / mask_filename), mask)
             processed += 1
 
-        print(f"  ✓ {processed} masques créés dans {masks_dir}")
+        print(f"  ✓ {processed} masques créés dans {masks_dir}")
     print("TERMINÉ : Conversion des annotations en masques.")
 
 
-def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train', num_classes: int = NUM_CLASSES) -> torch.Tensor:
+def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train') -> torch.Tensor:
     """
     Calcule les poids des classes en utilisant la méthode de la Fréquence Inverse Médiane.
     """
+    num_classes = NUM_CLASSES_SEG
     masks_dir = Path(dataset_path) / split / 'masks'
     pixel_counts = np.zeros(num_classes, dtype=np.int64)
     total_pixels = 0
@@ -127,16 +142,12 @@ def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train', 
     class_weights = median_frequency / frequencies
     
     print("--- Résumé des Poids de Classe ---")
-    for i, (name, id) in enumerate(CLASS_TO_ID.items()):
+    for i, name in enumerate(CLASS_NAMES_SEG):
         print(f"Classe {id} ({name}): Fréquence = {frequencies[i]:.4f}, Poids = {class_weights[i]:.2f}")
 
     return torch.from_numpy(class_weights).float()
 
 def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
-    """
-    NOUVELLE MÉTHODE (Corrigée) : Mappe les noms de classes COCO vers CLASS_TO_ID
-    et COPIE les images vers le dossier de destination.
-    """
     dataset_path = Path(dataset_path)
     output_path = Path(output_path) if output_path else dataset_path / 'yolo_format'
     output_path.mkdir(exist_ok=True, parents=True)
@@ -156,16 +167,27 @@ def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
         with open(coco_json, 'r') as f:
             coco_data = json.load(f)
         
-        # 1. CRÉER LE PONT : COCO ID -> NOM -> TON ID (config.py)
+        # 1. TRADUCTION STRICTE (YOLO commence à 0)
+        # On définit les classes valides. Tout ce qui n'est pas dedans sera IGNORÉ.
+        translation_table = {
+            "oil": 0,
+            "emulsion": 1,
+            "sheen": 2,
+            "ship": 3,
+            "oil-platform": 4
+        }
+
         coco_id_to_project_id = {}
         for cat in coco_data['categories']:
-            raw_name = cat['name'].lower().replace(' ', '-')
-            # Mapping spécifique pour Roboflow
-            if raw_name == 'oils-emulsions': raw_name = 'oil'
+            raw_name = cat['name'].lower().strip()
+            # Utilisation de .get(raw_name, None) pour éviter le 0 par défaut
+            project_id = translation_table.get(raw_name, None) 
             
-            project_id = CLASS_TO_ID.get(raw_name, 0)
-            coco_id_to_project_id[cat['id']] = project_id
-            print(f"  Mapping COCO {cat['id']} ({cat['name']}) -> Project ID {project_id}")
+            if project_id is not None:
+                coco_id_to_project_id[cat['id']] = project_id
+                print(f"✅ Mapping COCO {cat['id']} ({raw_name}) -> YOLO ID {project_id}")
+            else:
+                print(f"⏩ IGNORÉ: COCO {cat['id']} ({raw_name})")
 
         img_to_anns = {}
         for ann in coco_data['annotations']:
@@ -174,36 +196,39 @@ def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
         for img_info in tqdm(coco_data['images'], desc=f"Converting {split}"):
             img_name = img_info['file_name']
             
-            # --- AJOUT : COPIE PHYSIQUE DE L'IMAGE ---
+            # Copie de l'image
             src_img = dataset_path / split / img_name
             dst_img = images_dir / img_name
             if src_img.exists():
-                shutil.copy2(src_img, dst_img) # Copie l'image vers yolo_format
+                shutil.copy2(src_img, dst_img)
             
             label_file = labels_dir / (Path(img_name).stem + '.txt')
             anns = img_to_anns.get(img_info['id'], [])
             
             with open(label_file, 'w') as f:
                 for ann in anns:
-                    # Utilisation du mapping corrigé
-                    class_id = coco_id_to_project_id.get(ann['category_id'], 0)
+                    # On vérifie si la catégorie fait partie de notre mapping
+                    class_id = coco_id_to_project_id.get(ann['category_id'], None)
+                    if class_id is None: continue
                     
                     if 'segmentation' not in ann or not ann['segmentation']: continue
                     
                     for segmentation in ann['segmentation']:
+                        # YOLO segmentation nécessite au moins 3 points (6 coordonnées)
                         if len(segmentation) < 6: continue
+                        
                         normalized_coords = []
                         for i in range(0, len(segmentation), 2):
-                            # Normalisation relative aux dimensions de l'image
-                            x = max(0, min(1, segmentation[i] / img_info['width']))
-                            y = max(0, min(1, segmentation[i + 1] / img_info['height']))
+                            # Normalisation 0.0 - 1.0
+                            x = max(0.0, min(1.0, segmentation[i] / img_info['width']))
+                            y = max(0.0, min(1.0, segmentation[i + 1] / img_info['height']))
                             normalized_coords.extend([x, y])
                         
                         coords_str = ' '.join([f'{c:.6f}' for c in normalized_coords])
                         f.write(f"{class_id} {coords_str}\n")
     
-    # Génération du YAML pour YOLO
-    create_yolo_yaml(output_path, dataset_path)
+    # Création du YAML avec les 5 classes (0 à 4)
+    create_yolo_yaml(output_path, YOLO_CLASSES)
     return output_path
 
 def create_yolo_yaml(yolo_path, original_dataset_path):
@@ -214,16 +239,15 @@ def create_yolo_yaml(yolo_path, original_dataset_path):
         yolo_path: Path du dataset YOLO
         original_dataset_path: Path du dataset original (pour les class names)
     """
-    from config import CLASS_NAMES, NUM_CLASSES
-    
+   
     # Créer la configuration YAML
     data_config = {
         'path': str(yolo_path.absolute()),
         'train': 'images/train',
         'val': 'images/valid',
         'test': 'images/test',
-        'nc': NUM_CLASSES,
-        'names': [CLASS_NAMES[i] for i in range(NUM_CLASSES)]
+        'nc': NUM_CLASSES_YOLO,
+        'names': YOLO_CLASSES
     }
     
     yaml_path = yolo_path / 'data.yaml'

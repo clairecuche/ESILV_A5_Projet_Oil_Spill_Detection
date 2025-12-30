@@ -9,7 +9,7 @@ from pathlib import Path
 import albumentations as A 
 from albumentations.pytorch import ToTensorV2
 from typing import Tuple, Dict, Optional
-from config import TARGET_SIZE, DATA_DIR, BATCH_SIZE, NUM_CLASSES, NUM_WORKERS, PIN_MEMORY, PREFETCH_FACTOR
+from config import TARGET_SIZE, DATA_DIR, BATCH_SIZE, NUM_WORKERS, PREFETCH_FACTOR
 
 # --- Fonctions d'Augmentation (Robustes et Stables) ---
 
