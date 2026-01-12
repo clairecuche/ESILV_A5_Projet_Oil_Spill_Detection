@@ -240,7 +240,7 @@ class SegFormerTrainer:
         print(f"\nRésultats finaux (mIoU) : {test_results['mIoU']:.4f}")
         print("\nIoU par classe :")
         for class_id, iou in enumerate(test_results['class_iou']):
-            class_name = CLASS_NAMES.get(class_id, f"Class_{class_id}")
+            class_name = CLASS_NAMES_SEG.get(class_id, f"Class_{class_id}")
             print(f"  {class_name:15s}: {iou:.4f}")
 
 if __name__ == '__main__':
