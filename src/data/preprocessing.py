@@ -136,7 +136,7 @@ def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train', 
         
         total_instances = np.sum(class_counts)
         # Formule du papier : Total / (Instances_i * Nb_Classes) [cite: 276]
-        weights = total_instances / (class_counts * num_classes)
+        weights = total_instances / (class_counts * num_classes + 1e-6)
         
     else:
         # --- MÉTHODE PIXEL-BASED (Votre méthode actuelle corrigée) ---

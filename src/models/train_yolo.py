@@ -120,7 +120,7 @@ class YOLOv11Trainer:
             epochs=NUM_EPOCHS_YOLO,  # Max epochs (early stopping activé)
             batch=BATCH_SIZE_YOLO,   # 32 selon paper
             imgsz=TARGET_SIZE[0],
-            device=self.device,
+            device=[0, 1],
             
             # Optimizer (AdamW implicite)
             optimizer='AdamW',
@@ -180,8 +180,9 @@ class YOLOv11Trainer:
         possible_paths = [
             OUTPUT_DIR_YOLO / 'yolo_training' / 'weights' / 'best.pt',
             Path("/kaggle/working/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt"),
-            Path(r"C:\Users\benoi\OneDrive - De Vinci\A5 ESILV\CV\Project\ESILV_A5_Projet_Oil_Spill_Detection\outputs\yolo\yolo_training\weights\best.pt"),
+            Path(r"C:/Users/benoi/OneDrive-DeVinci/A5ESILV/CV/Project/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt"),
             Path("/kaggle/working/yolo/yolo_training/weights/best.pt"),
+            Path("outputs/yolo/yolo_training/weights/best.pt"),
             Path("output/best.pt")
         ]
         
@@ -224,11 +225,11 @@ class YOLOv11Trainer:
                 for i in range(images.shape[0]):
                     # On récupère l'image du batch (déjà chargée en 0-1 par le DataLoader)
                     img_np = images[i].permute(1, 2, 0).cpu().numpy()
-                    
-                    # Conversion simple vers le format 0-255 attendu par YOLO
-                    # On multiplie par 255 sans appliquer de soustraction de moyenne arbitraire
-                    img_uint8 = (img_np * 255).astype(np.uint8)
-                    
+                    # On annule Normalize : img = (img_norm * std) + mean
+                    img_rescaled = (img_np * std) + mean
+                    # On repasse en 0-255 proprement
+                    img_uint8 = (np.clip(img_rescaled, 0, 1) * 255).astype(np.uint8)
+                            
                     # === PRÉDICTION YOLO AVEC SEUILS OPTIMISÉS ===
                     results = model.predict(
                         img_uint8,
@@ -343,6 +344,8 @@ class YOLOv11Trainer:
         if result.masks is None:
             return semantic_mask
         
+        yolo_to_seg = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
+        
         # Récupérer les masques, classes et confidences
         masks = result.masks.data.cpu().numpy()  # (N, H, W)
         classes = result.boxes.cls.cpu().numpy().astype(int)  # (N,) - Classes YOLO 0-4
@@ -358,7 +361,7 @@ class YOLOv11Trainer:
             # YOLO classes: 0=Oil, 1=Emulsion, 2=Sheen, 3=Ship, 4=Oil-platform
             # GT classes:   1=Oil, 2=Emulsion, 3=Sheen, 4=Ship, 5=Oil-platform
             # Mapping simple: gt_cls = yolo_cls + 1
-            gt_cls = yolo_cls +1
+            gt_cls = yolo_to_seg.get(yolo_cls, 0)
             
             # Pour chaque pixel, garder la classe avec la plus haute confiance
             update_mask = (mask_binary) & (conf > confidence_map)
