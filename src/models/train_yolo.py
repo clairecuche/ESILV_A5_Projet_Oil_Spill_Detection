@@ -222,10 +222,12 @@ class YOLOv11Trainer:
         with torch.no_grad():
             for batch_idx, (images, masks) in enumerate(tqdm(test_loader, desc="Testing")):
                 for i in range(images.shape[0]):
-                    # === DÉNORMALISATION CORRECTE ===
+                    # On récupère l'image du batch (déjà chargée en 0-1 par le DataLoader)
                     img_np = images[i].permute(1, 2, 0).cpu().numpy()
-                    img_denorm = img_np * std + mean
-                    img_uint8 = (img_denorm * 255).clip(0, 255).astype(np.uint8)
+                    
+                    # Conversion simple vers le format 0-255 attendu par YOLO
+                    # On multiplie par 255 sans appliquer de soustraction de moyenne arbitraire
+                    img_uint8 = (img_np * 255).astype(np.uint8)
                     
                     # === PRÉDICTION YOLO AVEC SEUILS OPTIMISÉS ===
                     results = model.predict(
@@ -233,8 +235,8 @@ class YOLOv11Trainer:
                         verbose=False,
                         device=self.device,
                         imgsz=TARGET_SIZE[0],
-                        conf=0.15,  # ✅ Seuil bas pour plus de détections
-                        iou=0.4     # ✅ NMS moins agressif
+                        conf=0.25,  
+                        iou=0.45    
                     )
                     
                     # === CONVERSION INSTANCE → SÉMANTIQUE AVEC MAPPING ===
