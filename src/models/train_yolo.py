@@ -178,12 +178,12 @@ class YOLOv11Trainer:
         # 1. Charger le meilleur modèle sauvegardé
         # ✅ Essayer plusieurs chemins possibles
         possible_paths = [
-            OUTPUT_DIR_YOLO / 'yolo_training' / 'weights' / 'best.pt',
-            Path("/kaggle/working/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt"),
-            Path(r"C:/Users/benoi/OneDrive-DeVinci/A5ESILV/CV/Project/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/best.pt"),
-            Path("/kaggle/working/yolo/yolo_training/weights/best.pt"),
-            Path("outputs/yolo/yolo_training/weights/best.pt"),
-            Path("output/best.pt")
+            OUTPUT_DIR_YOLO / 'yolo_training' / 'weights' / 'yolo_best.pt',
+            Path("/kaggle/working/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/yolo_best.pt"),
+            Path(r"C:/Users/benoi/OneDrive-DeVinci/A5ESILV/CV/Project/ESILV_A5_Projet_Oil_Spill_Detection/outputs/yolo/yolo_training/weights/yolo_best.pt"),
+            Path("/kaggle/working/yolo/yolo_training/weights/yolo_best.pt"),
+            Path("outputs/yolo/yolo_training/weights/yolo_best.pt"),
+            Path("output/yolo_best.pt")
         ]
         
         best_model_path = None
@@ -236,7 +236,7 @@ class YOLOv11Trainer:
                         verbose=False,
                         device=self.device,
                         imgsz=TARGET_SIZE[0],
-                        conf=0.25,  
+                        conf=0.5,  
                         iou=0.45    
                     )
                     
@@ -320,59 +320,40 @@ class YOLOv11Trainer:
             }, f, indent=2)
             
         print(f"\n💾 Résultats validés sauvegardés dans : {results_path}")
-    
+
     def _convert_instance_to_semantic(self, result, img_shape):
-        """
-        Convertit les masques d'instance YOLO en masque sémantique.
-        
-        ✅ FIX CRITIQUE: Mapper YOLO classes (0-4) → GT classes (1-5)
-        
-        Selon le paper (section 4.4):
-        "we assigned each predicted pixel the class with the highest confidence score"
-        
-        Args:
-            result: Résultat YOLO (contient masks, boxes, cls, conf)
-            img_shape: (H, W) de l'image
-            
-        Returns:
-            semantic_mask: np.ndarray de shape (H, W) avec les class IDs GT (0-5)
-        """
         H, W = img_shape
-        semantic_mask = np.zeros((H, W), dtype=np.int64)  # Background = 0 par défaut
-        confidence_map = np.zeros((H, W), dtype=np.float32)
+        semantic_mask = np.zeros((H, W), dtype=np.int64)
         
         if result.masks is None:
             return semantic_mask
         
-        yolo_to_seg = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
+        # Ordre de priorité : on dessine d'abord les nappes, 
+        # puis les objets par-dessus pour qu'ils ne soient pas écrasés.
+        # 1: Oil, 2: Emulsion, 3: Sheen, 4: Ship, 5: Oil-platform
+        priority_order = [3, 2, 1, 4, 5] 
         
-        # Récupérer les masques, classes et confidences
-        masks = result.masks.data.cpu().numpy()  # (N, H, W)
-        classes = result.boxes.cls.cpu().numpy().astype(int)  # (N,) - Classes YOLO 0-4
-        confidences = result.boxes.conf.cpu().numpy()  # (N,)
-        
-        # Redimensionner les masques à la taille de l'image
-        for mask, yolo_cls, conf in zip(masks, classes, confidences):
-            # Resize mask
-            mask_resized = cv2.resize(mask, (W, H), interpolation=cv2.INTER_LINEAR)
-            mask_binary = mask_resized > 0.5
-            
-            # ✅ FIX CRITIQUE: MAPPING YOLO → GT
-            # YOLO classes: 0=Oil, 1=Emulsion, 2=Sheen, 3=Ship, 4=Oil-platform
-            # GT classes:   1=Oil, 2=Emulsion, 3=Sheen, 4=Ship, 5=Oil-platform
-            # Mapping simple: gt_cls = yolo_cls + 1
-            gt_cls = yolo_to_seg.get(yolo_cls, 0)
-            
-            # Pour chaque pixel, garder la classe avec la plus haute confiance
-            update_mask = (mask_binary) & (conf > confidence_map)
-            semantic_mask[update_mask] = gt_cls
-            confidence_map[update_mask] = conf
-        
-        return semantic_mask
+        masks = result.masks.data.cpu().numpy()
+        classes = result.boxes.cls.cpu().numpy().astype(int)
+        confidences = result.boxes.conf.cpu().numpy()
 
+        # On trie les détections par l'ordre de priorité défini ci-dessus
+        detections = sorted(zip(masks, classes, confidences), 
+                            key=lambda x: priority_order.index(x[1] + 1) if (x[1]+1) in priority_order else 0)
+
+        for mask, yolo_cls, conf in detections:
+            mask_resized = cv2.resize(mask, (W, H), interpolation=cv2.INTER_LINEAR)
+            mask_binary = mask_resized > 0.6
+            
+            gt_cls = yolo_cls + 1 # Votre mapping actuel
+            
+            # On remplace systématiquement si c'est une classe prioritaire
+            semantic_mask[mask_binary] = gt_cls
+            
+        return semantic_mask
+    
 
 if __name__ == '__main__':
     trainer = YOLOv11Trainer()
     trainer.train()
-    
     
