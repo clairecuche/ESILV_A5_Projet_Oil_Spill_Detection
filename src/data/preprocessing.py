@@ -135,7 +135,7 @@ def calculate_class_weights(dataset_path: str = DATA_DIR, split: str = 'train', 
                     class_counts[cls_id] += 1
         
         total_instances = np.sum(class_counts)
-        # Formule du papier : Total / (Instances_i * Nb_Classes) [cite: 276]
+        # Formule du papier : Total / (Instances_i * Nb_Classes)
         weights = total_instances / (class_counts * num_classes + 1e-6)
         
     else:
@@ -180,9 +180,7 @@ def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
             
         with open(coco_json, 'r') as f:
             coco_data = json.load(f)
-        
-        # 1. TRADUCTION STRICTE (YOLO commence à 0)
-        # On définit les classes valides. Tout ce qui n'est pas dedans sera IGNORÉ.
+
         translation_table = {
             "oil": 0,
             "emulsion": 1,
@@ -194,7 +192,6 @@ def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
         coco_id_to_project_id = {}
         for cat in coco_data['categories']:
             raw_name = cat['name'].lower().strip()
-            # Utilisation de .get(raw_name, None) pour éviter le 0 par défaut
             project_id = translation_table.get(raw_name, None) 
             
             if project_id is not None:
@@ -228,12 +225,11 @@ def convert_coco_to_yolo_segmentation(dataset_path, output_path=None):
                     if 'segmentation' not in ann or not ann['segmentation']: continue
                     
                     for segmentation in ann['segmentation']:
-                        # YOLO segmentation nécessite au moins 3 points (6 coordonnées)
                         if len(segmentation) < 6: continue
                         
                         normalized_coords = []
                         for i in range(0, len(segmentation), 2):
-                            # Normalisation 0.0 - 1.0
+                            # Normalisation
                             x = max(0.0, min(1.0, segmentation[i] / img_info['width']))
                             y = max(0.0, min(1.0, segmentation[i + 1] / img_info['height']))
                             normalized_coords.extend([x, y])

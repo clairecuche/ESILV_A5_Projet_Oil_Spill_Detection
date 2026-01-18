@@ -30,7 +30,7 @@ class YOLOv11Trainer:
     def __init__(self):
         self.device = torch.device(DEVICE)
         
-        # ✅ FIX 1: Clarifier les num_classes
+        # Clarifier les num_classes
         # YOLO entraîne sur 5 classes (sans Background)
         # Mais on évalue sur 6 classes (avec Background) pour comparer avec SegFormer
         self.num_classes_yolo = NUM_CLASSES_YOLO  # 5 (pour YOLO)
@@ -44,15 +44,12 @@ class YOLOv11Trainer:
         if weights_path.exists():
             self.class_weights = torch.load(weights_path)
         else:
-            # Calculer les poids pour les 5 classes d'objets (sans BG)
             self.class_weights = calculate_class_weights(split='train', use_paper_method=True)
-            # Si la fonction renvoie 6 poids (avec BG), on prend les 5 derniers
             if len(self.class_weights) == 6:
                 self.class_weights = self.class_weights[1:]
             torch.save(self.class_weights, weights_path)
         
         # 3. Métriques et Suivi
-        # ✅ FIX 2: Utiliser 6 classes pour l'évaluation (cohérent avec GT)
         self.val_metrics = SegmentationMetrics(num_classes=self.num_classes_eval)
         self.best_miou = -1.0
         self.best_map = -1.0
@@ -77,7 +74,7 @@ class YOLOv11Trainer:
 
     def _initialize_model(self):
         """Initialise YOLOv11m-seg avec poids COCO."""
-        model = YOLO('yolo11m-seg.pt')  # YOLOv11m segmentation
+        model = YOLO('yolo11m-seg.pt')  
         return model
     
     def _prepare_yolo_format(self):
@@ -117,20 +114,20 @@ class YOLOv11Trainer:
         # Configuration d'entraînement selon le paper
         results = self.model.train(
             data=data_yaml_path,
-            epochs=NUM_EPOCHS_YOLO,  # Max epochs (early stopping activé)
-            batch=BATCH_SIZE_YOLO,   # 32 selon paper
+            epochs=NUM_EPOCHS_YOLO,  
+            batch=BATCH_SIZE_YOLO,   
             imgsz=TARGET_SIZE[0],
             device=[0, 1],
             
-            # Optimizer (AdamW implicite)
+            # Optimizer
             optimizer='AdamW',
             lr0=LEARNING_RATE_YOLO,
             weight_decay=WEIGHT_DECAY,
             
-            # Early stopping (patience=10 selon paper)
+            # Early stopping
             patience=PATIENCE,
             
-            # Augmentations (selon paper section 4.3)
+            # Augmentations 
             mosaic=1.0,   # Mosaic augmentation
             hsv_h=0.015,  # HSV-Hue augmentation
             hsv_s=0.7,    # HSV-Saturation
@@ -205,7 +202,6 @@ class YOLOv11Trainer:
         # 3. Charger le test loader
         test_loader = get_dataloaders()['test']
         
-        # ✅ FIX 3: Vérifier qu'on est bien sur le test set
         print(f"\n🔍 Vérification du split:")
         print(f"   Nombre d'images test: {len(test_loader.dataset)}")
         print(f"   Attendu (paper LADOS): 343 images")
@@ -214,7 +210,6 @@ class YOLOv11Trainer:
         
         self.val_metrics.reset()
         
-        # ✅ FIX 4: Compteurs pour debug
         total_predictions = 0
         total_background_pixels = 0
         total_non_background_pixels = 0
